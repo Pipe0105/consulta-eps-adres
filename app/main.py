@@ -61,7 +61,7 @@ def progress(job_id: str):
 async def process(
     file: UploadFile = File(...),
     doc_type: str = Form("CC"),
-    headless: str = Form("0"),
+    headless: str = Form("1"),
     job_id: str | None = Form(None),
 ):
     raw = await file.read()
@@ -241,7 +241,14 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
         browser = launch_browser(p, headless=headless)
-        page = browser.new_page()
+        context = browser.new_context()
+        context.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in {"image", "media", "font", "stylesheet"}
+            else route.continue_(),
+        )
+        page = context.new_page()
         
         total = len(df)
 
@@ -254,7 +261,6 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
 
             try:
                 page.goto(START_URL, wait_until="domcontentloaded")
-                page.wait_for_load_state("networkidle")
 
                 # formulario puede estar en iframe
                 ctx = find_form_context(page)
@@ -310,6 +316,6 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
                 df.at[i, "EPS_ERROR"] = f"{type(e).__name__}: {e}"
             update_progress(job_id, i + 1, total)
 
-            time.sleep(0.7)
+            time.sleep(0.2)
 
         browser.close()

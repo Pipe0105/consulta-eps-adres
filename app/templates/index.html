@@ -98,12 +98,12 @@
 
         <label>Modo navegador</label>
         <p class="hint">
-          Visible para depuración. Si necesitas modo silencioso, cambia el valor
-          de headless a <span class="mono">1</span> en el backend. Si aparece un
-          error de navegador, ejecuta:
-          <span class="mono">playwright install</span>.
+          Ejecutamos en modo silencioso para acelerar la consulta. Si necesitas
+          ver el navegador, cambia el valor de headless a
+          <span class="mono">0</span> en el backend. Si aparece un error de
+          navegador, ejecuta: <span class="mono">playwright install</span>.
         </p>
-        <input type="hidden" name="headless" value="0" />
+        <input type="hidden" name="headless" value="1" />
 
         <input type="hidden" name="job_id" id="job-id" />
 
