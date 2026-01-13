@@ -45,6 +45,28 @@
       .mono {
         font-family: ui-monospace, Menlo, Consolas, monospace;
       }
+      .progress-wrap {
+        margin-top: 14px;
+        display: none;
+      }
+      .progress-bar {
+        width: 100%;
+        height: 14px;
+        background: #e5e7eb;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #10b981, #06b6d4);
+        transition: width 0.3s ease;
+      }
+      .progress-text {
+        margin-top: 8px;
+        font-weight: 700;
+        font-size: 0.95rem;
+      }
     </style>
   </head>
   <body>
@@ -55,7 +77,12 @@
         de EPS.
       </p>
 
-      <form action="/process" method="post" enctype="multipart/form-data">
+      <form
+        id="eps-form"
+        action="/process"
+        method="post"
+        enctype="multipart/form-data"
+      >
         <label>Archivo Excel (.xlsx)</label>
         <input name="file" type="file" accept=".xlsx" required />
 
@@ -74,12 +101,62 @@
           <option value="1">Oculto (headless)</option>
         </select>
 
+        <input type="hidden" name="job_id" id="job-id" />
+
         <button type="submit">Procesar y descargar</button>
       </form>
+
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <div class="progress-text" id="progress-text">0%</div>
+      </div>
 
       <p class="hint" style="margin-top: 14px">
         Ejecuta: <span class="mono">uvicorn app.main:app --reload</span>
       </p>
     </div>
+    <script>
+      const form = document.getElementById("eps-form");
+      const jobIdInput = document.getElementById("job-id");
+      const progressWrap = document.getElementById("progress-wrap");
+      const progressFill = document.getElementById("progress-fill");
+      const progressText = document.getElementById("progress-text");
+
+      let pollTimer = null;
+
+      function setProgress(percent, current, total) {
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}% (${current}/${total})`;
+      }
+
+      async function pollProgress(jobId) {
+        try {
+          const response = await fetch(`/progress/${jobId}`, {
+            cache: "no-store",
+          });
+          if (!response.ok) return;
+          const data = await response.json();
+          if (data.status === "unknown") return;
+          progressWrap.style.display = "block";
+          setProgress(data.percent || 0, data.current || 0, data.total || 0);
+          if (data.status === "done" || data.status === "error") {
+            clearInterval(pollTimer);
+          }
+        } catch (err) {
+          clearInterval(pollTimer);
+        }
+      }
+
+      form.addEventListener("submit", () => {
+        const jobId = crypto.randomUUID();
+        jobIdInput.value = jobId;
+        progressWrap.style.display = "block";
+        setProgress(0, 0, 0);
+        clearInterval(pollTimer);
+        pollTimer = setInterval(() => pollProgress(jobId), 1000);
+      });
+    </script>
   </body>
 </html>

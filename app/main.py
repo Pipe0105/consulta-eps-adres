@@ -4,12 +4,14 @@ import asyncio
 import os
 import sys
 import time
+import uuid
 from datetime import datetime
+from threading import Lock
 from typing import Tuple
 
 import pandas as pd
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -25,6 +27,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 app = FastAPI(title="Consulta masiva EPS (ADRES) - Sin API")
+PROGRESS_LOCK = Lock()
+PROGRESS_STATE = {}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -32,11 +36,22 @@ def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/progress/{job_id}")
+def progress(job_id: str):
+    with PROGRESS_LOCK:
+        data = PROGRESS_STATE.get(job_id)
+    if not data:
+        return JSONResponse({"status": "unknown", "current": 0, "total": 0, "percent": 0}, status_code=404)
+    return JSONResponse(data)
+
+
+
 @app.post("/process")
 async def process(
     file: UploadFile = File(...),
     doc_type: str = Form("CC"),
     headless: str = Form("0"),
+    job_id: str | None = Form(None),
 ):
     raw = await file.read()
     df, doc_col = read_input_excel(raw)
@@ -67,7 +82,14 @@ async def process(
 
     use_headless = (headless == "1")
 
-    await anyio.to_thread.run_sync(scrape_eps_sync, out, doc_col, use_headless)
+    job_id = job_id or str(uuid.uuid4())
+    init_progress(job_id, len(out))
+    try:
+        await anyio.to_thread.run_sync(scrape_eps_sync, out, doc_col, use_headless, job_id)
+        finish_progress(job_id, "done")
+    except Exception as exc:
+        finish_progress(job_id, "error", error=str(exc))
+        raise
 
 
 
@@ -86,6 +108,41 @@ async def process(
     )
 
 
+def init_progress(job_id: str, total: int) -> None:
+    with PROGRESS_LOCK:
+        PROGRESS_STATE[job_id] = {
+            "status": "running",
+            "current": 0,
+            "total": total,
+            "percent": 0,
+            "error": "",
+        }
+
+
+def update_progress(job_id: str, current: int, total: int) -> None:
+    percent = int((current / total) * 100) if total else 0
+    with PROGRESS_LOCK:
+        if job_id in PROGRESS_STATE:
+            PROGRESS_STATE[job_id].update(
+                {
+                    "current": current,
+                    "total": total,
+                    "percent": min(percent, 100),
+                }
+            )
+
+
+def finish_progress(job_id: str, status: str, error: str = "") -> None:
+    with PROGRESS_LOCK:
+        if job_id in PROGRESS_STATE:
+            PROGRESS_STATE[job_id].update(
+                {
+                    "status": status,
+                    "percent": 100 if status == "done" else PROGRESS_STATE[job_id].get("percent", 0),
+                    "error": error,
+                }
+            )
+
 def read_input_excel(raw_bytes: bytes) -> Tuple[pd.DataFrame, str]:
     df = pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
     df.columns = [c.strip() for c in df.columns]
@@ -100,13 +157,16 @@ def read_input_excel(raw_bytes: bytes) -> Tuple[pd.DataFrame, str]:
     return df, df.columns[0]
 
 
-def find_form_context(page):
+def find_form_context(page, timeout_s: float = 20.0):
     # El formulario puede estar en un iframe
-    if page.locator("#txtNumDoc").count() > 0:
-        return page
-    for fr in page.frames:
-        if fr.locator("#txtNumDoc").count() > 0:
-            return fr
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if page.locator("#txtNumDoc").count() > 0:
+            return page
+        for fr in page.frames:
+            if fr.locator("#txtNumDoc").count() > 0:
+                return fr
+        time.sleep(0.3)
     raise RuntimeError("No encontré #txtNumDoc (cambió la página o no cargó el iframe).")
 
 
@@ -143,33 +203,28 @@ async def parse_aff_first_row(ctx, table_id: str) -> dict:
 
 
 
-def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool):
+def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str):
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         page = browser.new_page()
+        
+        total = len(df)
 
         for i, row in df.iterrows():
             doc = str(row.get(doc_col, "")).strip()
             if not doc or doc.lower() == "nan":
                 df.at[i, "EPS_ERROR"] = "Documento vacío"
+                update_progress(job_id, i + 1, total)
                 continue
 
             try:
                 page.goto(START_URL, wait_until="domcontentloaded")
+                page.wait_for_load_state("networkidle")
 
                 # formulario puede estar en iframe
-                ctx = page
-                if page.locator("#txtNumDoc").count() == 0:
-                    found = False
-                    for fr in page.frames:
-                        if fr.locator("#txtNumDoc").count() > 0:
-                            ctx = fr
-                            found = True
-                            break
-                    if not found:
-                        raise RuntimeError("No encontré #txtNumDoc en página ni en iframes")
+                ctx = find_form_context(page)
 
                 ctx.fill("#txtNumDoc", doc)
                 ctx.click("#btnConsultar")
@@ -227,6 +282,7 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool):
 
             except Exception as e:
                 df.at[i, "EPS_ERROR"] = f"{type(e).__name__}: {e}"
+            update_progress(job_id, i + 1, total)
 
             time.sleep(0.7)
 
