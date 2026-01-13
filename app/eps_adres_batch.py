@@ -74,6 +74,8 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)  # cambia a True cuando esté estable
         page = browser.new_page()
+        page.set_default_timeout(0)
+        page.set_default_navigation_timeout(0)
         page.goto(START_URL, wait_until="domcontentloaded")
 
         for i, row in df.iterrows():
@@ -95,7 +97,7 @@ def main():
 
                 # Esperar a que navegue al resultado con tokenId
                 try:
-                    page.wait_for_url(f"**{RESULT_URL_PART}**", timeout=30000)
+                    page.wait_for_url(f"**{RESULT_URL_PART}**")
                 except PWTimeout:
                     # A veces la navegación ocurre dentro del iframe; intentamos detectarlo
                     # pero normalmente tokenId termina en la URL principal.
@@ -120,7 +122,7 @@ def main():
                             break
 
                 # Esperar tablas
-                result_ctx.wait_for_selector("#GridViewBasica", timeout=30000)
+                result_ctx.wait_for_selector("#GridViewBasica")
 
                 # Parse básico
                 basic = parse_kv_table(result_ctx, "GridViewBasica")

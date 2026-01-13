@@ -31,9 +31,6 @@ NAME_COL_ALIASES = [
     "NOMBRE",
 ]
 
-FORM_TIMEOUT_S = 8.0
-NAV_TIMEOUT_MS = 15000
-RESULT_TIMEOUT_MS = 15000
 
 # --- templates (ruta absoluta, robusta) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -202,17 +199,16 @@ def find_name_column(df: pd.DataFrame) -> str | None:
     return None
 
 
-def find_form_context(page, timeout_s: float = FORM_TIMEOUT_S):
+def find_form_context(page):
     # El formulario puede estar en un iframe
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
+    while True:
         if page.locator("#txtNumDoc").count() > 0:
             return page
         for fr in page.frames:
             if fr.locator("#txtNumDoc").count() > 0:
                 return fr
         time.sleep(0.3)
-    raise RuntimeError("No encontré #txtNumDoc (cambió la página o no cargó el iframe).")
+
 
 
 def parse_kv_table(ctx, table_id: str) -> dict:
@@ -274,8 +270,8 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
             else route.continue_(),
         )
         page = context.new_page()
-        page.set_default_timeout(NAV_TIMEOUT_MS)
-        page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+        page.set_default_timeout(0)
+        page.set_default_navigation_timeout(0)
         
         total = len(df)
 
@@ -299,7 +295,7 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
                 ctx.click("#btnConsultar")
 
                 try:
-                    page.wait_for_url(f"**{RESULT_URL_PART}**", timeout=RESULT_TIMEOUT_MS)
+                    page.wait_for_url(f"**{RESULT_URL_PART}**")
                 except PWTimeout:
                     pass
 
@@ -313,7 +309,7 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
                             result_ctx = fr
                             break
 
-                result_ctx.wait_for_selector("#GridViewBasica", timeout=RESULT_TIMEOUT_MS)
+                result_ctx.wait_for_selector("#GridViewBasica")
 
                 # parse GridViewBasica (2 cols)
                 basic = parse_kv_table(result_ctx, "GridViewBasica")

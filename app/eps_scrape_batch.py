@@ -83,6 +83,8 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)  # pon True cuando ya esté estable
         page = browser.new_page()
+        page.set_default_timeout(0)
+        page.set_default_navigation_timeout(0)
         page.goto(URL, wait_until="domcontentloaded")
 
         for i, row in df.iterrows():
@@ -102,7 +104,7 @@ def main():
                 page.click("#btnConsultar")
 
                 # esperar que aparezcan tablas de resultado
-                page.wait_for_selector("#GridViewBasica", timeout=30000)
+                page.wait_for_selector("#GridViewBasica")
 
                 # tabla básica
                 basic = parse_kv_table(page, "GridViewBasica")
