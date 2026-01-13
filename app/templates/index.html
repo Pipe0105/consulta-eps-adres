@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Consulta EPS ADRES</title>
+    <style>
+      body {
+        font-family: system-ui, Arial, sans-serif;
+        margin: 24px;
+      }
+      .card {
+        max-width: 780px;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 18px;
+      }
+      label {
+        display: block;
+        margin: 12px 0 6px;
+        font-weight: 800;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+      }
+      button {
+        margin-top: 14px;
+        padding: 10px 14px;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 900;
+        background: #111827;
+        color: white;
+      }
+      .hint {
+        color: #6b7280;
+        font-size: 0.95rem;
+        line-height: 1.4;
+      }
+      .mono {
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2 style="margin-top: 0">Consulta masiva EPS (ADRES) — sin API</h2>
+      <p class="hint">
+        Sube un Excel con columna <b>NUMERO</b>. Descarga un Excel con los datos
+        de EPS.
+      </p>
+
+      <form action="/process" method="post" enctype="multipart/form-data">
+        <label>Archivo Excel (.xlsx)</label>
+        <input name="file" type="file" accept=".xlsx" required />
+
+        <label>Tipo de documento</label>
+        <select name="doc_type">
+          <option value="CC" selected>CC</option>
+          <option value="CE">CE</option>
+          <option value="TI">TI</option>
+          <option value="PA">PA</option>
+          <option value="NIT">NIT</option>
+        </select>
+
+        <label>Modo navegador</label>
+        <select name="headless">
+          <option value="0" selected>Visible (recomendado)</option>
+          <option value="1">Oculto (headless)</option>
+        </select>
+
+        <button type="submit">Procesar y descargar</button>
+      </form>
+
+      <p class="hint" style="margin-top: 14px">
+        Ejecuta: <span class="mono">uvicorn app.main:app --reload</span>
+      </p>
+    </div>
+  </body>
+</html>
