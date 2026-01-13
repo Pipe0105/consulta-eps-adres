@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
-from playwright.sync_api import Error as PlaywrightErrors
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 
