@@ -37,10 +37,26 @@
         background: #111827;
         color: white;
       }
+      .button-secondary {
+        background: #f3f4f6;
+        color: #111827;
+        border: 1px solid #e5e7eb;
+      }
+      .button-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
       .hint {
         color: #6b7280;
         font-size: 0.95rem;
         line-height: 1.4;
+      }
+      .status-text {
+        margin-top: 10px;
+        font-weight: 700;
+        color: #374151;
       }
       .mono {
         font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -107,7 +123,17 @@
 
         <input type="hidden" name="job_id" id="job-id" />
 
-        <button type="submit">Procesar y descargar</button>
+        <div class="button-row">
+          <button type="submit">Procesar y descargar</button>
+          <button
+            type="button"
+            class="button-secondary"
+            id="cancel-button"
+            disabled
+          >
+            Cancelar proceso
+          </button>
+        </div>
       </form>
 
       <div class="progress-wrap" id="progress-wrap">
@@ -115,6 +141,7 @@
           <div class="progress-fill" id="progress-fill"></div>
         </div>
         <div class="progress-text" id="progress-text">0%</div>
+        <div class="status-text" id="status-text"></div>
       </div>
 
       <p class="hint" style="margin-top: 14px">
@@ -127,12 +154,19 @@
       const progressWrap = document.getElementById("progress-wrap");
       const progressFill = document.getElementById("progress-fill");
       const progressText = document.getElementById("progress-text");
+      const statusText = document.getElementById("status-text");
+      const cancelButton = document.getElementById("cancel-button");
 
       let pollTimer = null;
+      let currentJobId = null;
 
       function setProgress(percent, current, total) {
         progressFill.style.width = `${percent}%`;
         progressText.textContent = `${percent}% (${current}/${total})`;
+      }
+
+      function setStatus(message) {
+        statusText.textContent = message;
       }
 
       async function pollProgress(jobId) {
@@ -145,8 +179,22 @@
           if (data.status === "unknown") return;
           progressWrap.style.display = "block";
           setProgress(data.percent || 0, data.current || 0, data.total || 0);
-          if (data.status === "done" || data.status === "error") {
+          if (data.status === "done") {
+            setStatus("Proceso finalizado. Descargando archivo...");
+          }
+          if (data.status === "error") {
+            setStatus("Ocurrió un error durante el proceso.");
+          }
+          if (data.status === "canceled") {
+            setStatus("Proceso cancelado por el usuario.");
+          }
+          if (
+            data.status === "done" ||
+            data.status === "error" ||
+            data.status === "canceled"
+          ) {
             clearInterval(pollTimer);
+            cancelButton.disabled = true;
           }
         } catch (err) {
           clearInterval(pollTimer);
@@ -156,10 +204,23 @@
       form.addEventListener("submit", () => {
         const jobId = crypto.randomUUID();
         jobIdInput.value = jobId;
+        currentJobId = jobId;
         progressWrap.style.display = "block";
         setProgress(0, 0, 0);
+        setStatus("Procesando...");
         clearInterval(pollTimer);
         pollTimer = setInterval(() => pollProgress(jobId), 1000);
+        cancelButton.disabled = false;
+      });
+
+      cancelButton.addEventListener("click", async () => {
+        if (!currentJobId) return;
+        cancelButton.disabled = true;
+        try {
+          await fetch(`/cancel/${currentJobId}`, { method: "POST" });
+        } catch (err) {
+          setStatus("No fue posible cancelar en este momento.");
+        }
       });
     </script>
   </body>

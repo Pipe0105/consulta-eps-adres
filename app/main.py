@@ -59,6 +59,15 @@ def progress(job_id: str):
         return JSONResponse({"status": "unknown", "current": 0, "total": 0, "percent": 0}, status_code=404)
     return JSONResponse(data)
 
+@app.post("/cancel/{job_id}")
+def cancel(job_id: str):
+    with PROGRESS_LOCK:
+        data = PROGRESS_STATE.get(job_id)
+        if not data:
+            return JSONResponse({"status": "unknown"}, status_code=404)
+        data["cancelled"] = True
+        data["status"] = "canceled"
+    return JSONResponse({"status": "canceled"})
 
 
 @app.post("/process")
@@ -102,8 +111,14 @@ async def process(
     job_id = job_id or str(uuid.uuid4())
     init_progress(job_id, len(out))
     try:
-        await anyio.to_thread.run_sync(scrape_eps_sync, out, doc_col, use_headless, job_id)
-        finish_progress(job_id, "done")
+        cancelled = await anyio.to_thread.run_sync(
+            scrape_eps_sync,
+            out,
+            doc_col,
+            use_headless,
+            job_id,
+        )
+        finish_progress(job_id, "canceled" if cancelled else "done")
     except Exception as exc:
         finish_progress(job_id, "error", error=str(exc))
         raise
@@ -133,6 +148,7 @@ def init_progress(job_id: str, total: int) -> None:
             "total": total,
             "percent": 0,
             "error": "",
+            "cancelled": False,
         }
 
 
@@ -159,6 +175,11 @@ def finish_progress(job_id: str, status: str, error: str = "") -> None:
                     "error": error,
                 }
             )
+            
+def is_cancelled(job_id: str) -> bool:
+    with PROGRESS_LOCK:
+        return PROGRESS_STATE.get(job_id, {}).get("cancelled", False)
+
 
 def read_input_excel(raw_bytes: bytes) -> Tuple[pd.DataFrame, str, str | None]:
     df = pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
@@ -240,7 +261,7 @@ def ensure_playwright_browsers() -> bool:
 
 
 
-def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str):
+def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str) -> bool:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
@@ -259,6 +280,9 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
         total = len(df)
 
         for i, row in df.iterrows():
+            if is_cancelled(job_id):
+                browser.close()
+                return True
             doc = str(row.get(doc_col, "")).strip()
             if not doc or doc.lower() == "nan":
                 df.at[i, "EPS_ERROR"] = "Documento vacío"
@@ -325,3 +349,4 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
             time.sleep(0.2)
 
         browser.close()
+        return False
