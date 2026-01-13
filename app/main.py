@@ -1,7 +1,8 @@
 import io
 import anyio
-
+import asyncio
 import os
+import sys
 import time
 from datetime import datetime
 from typing import Tuple
@@ -143,6 +144,8 @@ async def parse_aff_first_row(ctx, table_id: str) -> dict:
 
 
 def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool):
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         page = browser.new_page()
