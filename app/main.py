@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import uuid
+import subprocess
 from datetime import datetime
 from threading import Lock
 from typing import Tuple
@@ -30,6 +31,8 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 app = FastAPI(title="Consulta masiva EPS (ADRES) - Sin API")
 PROGRESS_LOCK = Lock()
 PROGRESS_STATE = {}
+PLAYWRIGHT_INSTALL_LOCK = Lock()
+PLAYWRIGHT_INSTALL_ATTEMPTED = False
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -208,10 +211,28 @@ def launch_browser(p, headless: bool):
     except PlaywrightError as exc:
         message = str(exc)
         if "Executable doesn't exist" in message:
+            if ensure_playwright_browsers():
+                return p.chromium.launch(headless=headless)
             raise RuntimeError(
-                "Playwright no tiene instalado el navegador. Ejecuta: playwright install"
+                "Playwright no tiene instalado el navegador y no fue posible instalarlo. "
+                "Ejecuta: playwright install"
             ) from exc
         raise
+    
+def ensure_playwright_browsers() -> bool:
+    global PLAYWRIGHT_INSTALL_ATTEMPTED
+    with PLAYWRIGHT_INSTALL_LOCK:
+        if PLAYWRIGHT_INSTALL_ATTEMPTED:
+            return False
+        PLAYWRIGHT_INSTALL_ATTEMPTED = True
+
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
 
 
 
