@@ -1,14 +1,17 @@
 import io
 import anyio
 import asyncio
+import math
 import os
 import sys
 import time
 import uuid
 import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from threading import Lock
-from typing import Tuple
+from typing import Callable, Iterable, Tuple
+import multiprocessing
 
 import pandas as pd
 from fastapi import FastAPI, File, Form, UploadFile
@@ -41,6 +44,7 @@ PROGRESS_LOCK = Lock()
 PROGRESS_STATE = {}
 PLAYWRIGHT_INSTALL_LOCK = Lock()
 PLAYWRIGHT_INSTALL_ATTEMPTED = False
+DEFAULT_WORKERS = max(1, min(4, (os.cpu_count() or 2)))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -109,7 +113,7 @@ async def process(
     init_progress(job_id, len(out))
     try:
         cancelled = await anyio.to_thread.run_sync(
-            scrape_eps_sync,
+            scrape_eps_parallel,
             out,
             doc_col,
             use_headless,
@@ -208,6 +212,18 @@ def find_form_context(page):
             if fr.locator("#txtNumDoc").count() > 0:
                 return fr
         time.sleep(0.3)
+        
+def navigate_to_form(page, first_load: bool):
+    if first_load:
+        page.goto(START_URL, wait_until="domcontentloaded")
+        return find_form_context(page)
+    try:
+        page.go_back(wait_until="domcontentloaded")
+        return find_form_context(page)
+    except Exception:
+        page.goto(START_URL, wait_until="domcontentloaded")
+        return find_form_context(page)
+
 
 
 
@@ -257,7 +273,13 @@ def ensure_playwright_browsers() -> bool:
 
 
 
-def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str) -> bool:
+def scrape_eps_records(
+    df: pd.DataFrame,
+    doc_col: str,
+    headless: bool,
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> bool:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
@@ -274,22 +296,22 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
         page.set_default_navigation_timeout(0)
         
         total = len(df)
+        first_load = True
 
         for i, row in df.iterrows():
-            if is_cancelled(job_id):
+            if cancel_check and cancel_check():
                 browser.close()
                 return True
             doc = str(row.get(doc_col, "")).strip()
             if not doc or doc.lower() == "nan":
                 df.at[i, "EPS_ERROR"] = "Documento vacío"
-                update_progress(job_id, i + 1, total)
+                if progress_callback:
+                    progress_callback(i + 1, total)
                 continue
 
             try:
-                page.goto(START_URL, wait_until="domcontentloaded")
-
-                # formulario puede estar en iframe
-                ctx = find_form_context(page)
+                ctx = navigate_to_form(page, first_load)
+                first_load = False
 
                 ctx.fill("#txtNumDoc", doc)
                 ctx.click("#btnConsultar")
@@ -340,9 +362,70 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
 
             except Exception as e:
                 df.at[i, "EPS_ERROR"] = f"{type(e).__name__}: {e}"
-            update_progress(job_id, i + 1, total)
-
-            time.sleep(0.2)
+            if progress_callback:
+                progress_callback(i + 1, total)
 
         browser.close()
         return False
+
+
+def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str) -> bool:
+    return scrape_eps_records(
+        df,
+        doc_col,
+        headless,
+        progress_callback=lambda current, total: update_progress(job_id, current, total),
+        cancel_check=lambda: is_cancelled(job_id),
+    )
+
+
+def _scrape_eps_worker(records: list[dict], doc_col: str, headless: bool) -> list[dict]:
+    df = pd.DataFrame.from_records(records).set_index("__index")
+    scrape_eps_records(df, doc_col, headless)
+    df.reset_index(inplace=True)
+    return df.to_dict(orient="records")
+
+
+def _chunk_records(df: pd.DataFrame, workers: int) -> Iterable[list[dict]]:
+    total = len(df)
+    if total == 0:
+        return []
+    chunk_size = max(1, math.ceil(total / workers))
+    chunks = []
+    for start in range(0, total, chunk_size):
+        chunk = df.iloc[start : start + chunk_size].copy()
+        chunk.reset_index(inplace=True)
+        chunk.rename(columns={"index": "__index"}, inplace=True)
+        chunks.append(chunk.to_dict(orient="records"))
+    return chunks
+
+
+def scrape_eps_parallel(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str) -> bool:
+    workers = int(os.getenv("EPS_WORKERS", str(DEFAULT_WORKERS)))
+    if workers <= 1 or len(df) <= 1:
+        return scrape_eps_sync(df, doc_col, headless, job_id)
+
+    total = len(df)
+    completed = 0
+
+    chunks = _chunk_records(df, workers)
+    mp_context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+        future_map = {
+            executor.submit(_scrape_eps_worker, chunk, doc_col, headless): chunk
+            for chunk in chunks
+        }
+        for future in as_completed(future_map):
+            if is_cancelled(job_id):
+                for pending in future_map:
+                    pending.cancel()
+                return True
+            results = future.result()
+            for row in results:
+                idx = row.pop("__index")
+                for key, value in row.items():
+                    df.at[idx, key] = value
+                completed += 1
+            update_progress(job_id, min(completed, total), total)
+
+    return False
