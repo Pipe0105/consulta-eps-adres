@@ -2,10 +2,24 @@ import time
 import pandas as pd
 from playwright.sync_api import sync_playwright
 
-URL = "https://www.adres.gov.co/consulte-su-eps"  # si realmente consultas en otra URL final, ponla aquí
+URL = "https://www.adres.gov.co/consulte-su-eps"
 INPUT_XLSX = "input.xlsx"
 OUTPUT_XLSX = "output_eps.xlsx"
 DOC_COL = "NUMERO"
+NAME_COL_ALIASES = [
+    "NOMBRE / RAZON SOCIAL",
+    "NOMBRE/RAZON SOCIAL",
+    "NOMBRE RAZON SOCIAL",
+    "RAZON SOCIAL",
+    "NOMBRE",
+]
+
+
+def find_name_column(df: pd.DataFrame) -> str | None:
+    for col in NAME_COL_ALIASES:
+        if col in df.columns:
+            return col
+    return None
 
 def parse_kv_table(page, table_id: str) -> dict:
     """
@@ -46,6 +60,9 @@ def parse_aff_table(page, table_id: str) -> dict:
 def main():
     df = pd.read_excel(INPUT_XLSX, dtype=str)
     df[DOC_COL] = df[DOC_COL].astype(str).str.strip()
+    name_col = find_name_column(df)
+    if name_col:
+        df[name_col] = df[name_col].astype(str).str.strip()
 
     # columnas salida
     df["EPS_TIPO_ID"] = ""

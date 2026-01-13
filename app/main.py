@@ -23,6 +23,13 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 START_URL = "https://www.adres.gov.co/consulte-su-eps"
 RESULT_URL_PART = "BDUA_Internet/Pages/RespuestaConsulta.aspx"
 DOC_COL_DEFAULT = "NUMERO"
+NAME_COL_ALIASES = [
+    "NOMBRE / RAZON SOCIAL",
+    "NOMBRE/RAZON SOCIAL",
+    "NOMBRE RAZON SOCIAL",
+    "RAZON SOCIAL",
+    "NOMBRE",
+]
 
 # --- templates (ruta absoluta, robusta) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -58,8 +65,10 @@ async def process(
     job_id: str | None = Form(None),
 ):
     raw = await file.read()
-    df, doc_col = read_input_excel(raw)
+    df, doc_col, name_col = read_input_excel(raw)
     df[doc_col] = df[doc_col].astype(str).str.strip()
+    if name_col:
+        df[name_col] = df[name_col].astype(str).str.strip()
 
     out = df.copy()
     now = datetime.now().isoformat(timespec="seconds")
@@ -84,7 +93,7 @@ async def process(
     out["EPS_RESULT_URL"] = ""
     out["EPS_ERROR"] = ""
 
-    use_headless = False
+    use_headless = headless == "1"
 
     job_id = job_id or str(uuid.uuid4())
     init_progress(job_id, len(out))
@@ -147,18 +156,25 @@ def finish_progress(job_id: str, status: str, error: str = "") -> None:
                 }
             )
 
-def read_input_excel(raw_bytes: bytes) -> Tuple[pd.DataFrame, str]:
+def read_input_excel(raw_bytes: bytes) -> Tuple[pd.DataFrame, str, str | None]:
     df = pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
     df.columns = [c.strip() for c in df.columns]
 
     if DOC_COL_DEFAULT in df.columns:
-        return df, DOC_COL_DEFAULT
+        return df, DOC_COL_DEFAULT, find_name_column(df)
 
     for c in ["DOCUMENTO", "CEDULA", "IDENTIFICACION", "ID"]:
         if c in df.columns:
-            return df, c
+            return df, c, find_name_column(df)
 
-    return df, df.columns[0]
+    return df, df.columns[0], find_name_column(df)
+
+
+def find_name_column(df: pd.DataFrame) -> str | None:
+    for col in NAME_COL_ALIASES:
+        if col in df.columns:
+            return col
+    return None
 
 
 def find_form_context(page, timeout_s: float = 20.0):
@@ -187,23 +203,6 @@ def parse_kv_table(ctx, table_id: str) -> dict:
             data[k] = v
     return data
 
-
-async def parse_aff_first_row(ctx, table_id: str) -> dict:
-    out = {}
-    headers_nodes = await ctx.locator(f"#{table_id} th").all()
-    headers = [(await h.inner_text()).strip() for h in headers_nodes]
-
-    rows = await ctx.locator(f"#{table_id} tr").all()
-    if len(rows) < 2 or not headers:
-        return out
-
-    first = await rows[1].locator("td").all()
-    if len(first) != len(headers):
-        return out
-
-    for h, c in zip(headers, first):
-        out[h] = (await c.inner_text()).strip()
-    return out
 
 def launch_browser(p, headless: bool):
     try:
@@ -281,14 +280,7 @@ def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str)
                 result_ctx.wait_for_selector("#GridViewBasica", timeout=30000)
 
                 # parse GridViewBasica (2 cols)
-                basic = {}
-                rows = result_ctx.locator("#GridViewBasica tr").all()
-                for r in rows[1:]:
-                    tds = r.locator("td").all()
-                    if len(tds) >= 2:
-                        k = tds[0].inner_text().strip()
-                        v = tds[1].inner_text().strip()
-                        basic[k] = v
+                basic = parse_kv_table(result_ctx, "GridViewBasica")
 
                 df.at[i, "EPS_TIPO_ID"] = basic.get("TIPO DE IDENTIFICACIÓN", "")
                 df.at[i, "EPS_NUMERO_ID"] = basic.get("NÚMERO DE IDENTIFICACION", "")

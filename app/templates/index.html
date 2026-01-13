@@ -73,8 +73,9 @@
     <div class="card">
       <h2 style="margin-top: 0">Consulta masiva EPS (ADRES)</h2>
       <p class="hint">
-        Sube un Excel con columna <b>NUMERO</b>. Descarga un Excel con los datos
-        de EPS.
+        Sube un Excel con las columnas <b>NUMERO</b> y
+        <b>NOMBRE / RAZON SOCIAL</b>. El sistema mantiene tus columnas
+        originales y agrega la información devuelta por ADRES.
       </p>
 
       <form
@@ -97,8 +98,10 @@
 
         <label>Modo navegador</label>
         <p class="hint">
-          Visible (forzado mientras se valida el flujo). Para evitar errores de
-          Playwright ejecuta: <span class="mono">playwright install</span>.
+          Visible para depuración. Si necesitas modo silencioso, cambia el valor
+          de headless a <span class="mono">1</span> en el backend. Si aparece un
+          error de navegador, ejecuta:
+          <span class="mono">playwright install</span>.
         </p>
         <input type="hidden" name="headless" value="0" />
 
