@@ -96,10 +96,11 @@
         </select>
 
         <label>Modo navegador</label>
-        <select name="headless">
-          <option value="0" selected>Visible (recomendado)</option>
-          <option value="1">Oculto (headless)</option>
-        </select>
+        <p class="hint">
+          Visible (forzado mientras se valida el flujo). Para evitar errores de
+          Playwright ejecuta: <span class="mono">playwright install</span>.
+        </p>
+        <input type="hidden" name="headless" value="0" />
 
         <input type="hidden" name="job_id" id="job-id" />
 

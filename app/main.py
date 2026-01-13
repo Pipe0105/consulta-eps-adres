@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
+from playwright.sync_api import Error as PlaywrightErrors
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 
@@ -80,7 +81,7 @@ async def process(
     out["EPS_RESULT_URL"] = ""
     out["EPS_ERROR"] = ""
 
-    use_headless = (headless == "1")
+    use_headless = False
 
     job_id = job_id or str(uuid.uuid4())
     init_progress(job_id, len(out))
@@ -201,13 +202,25 @@ async def parse_aff_first_row(ctx, table_id: str) -> dict:
         out[h] = (await c.inner_text()).strip()
     return out
 
+def launch_browser(p, headless: bool):
+    try:
+        return p.chromium.launch(headless=headless)
+    except PlaywrightError as exc:
+        message = str(exc)
+        if "Executable doesn't exist" in message:
+            raise RuntimeError(
+                "Playwright no tiene instalado el navegador. Ejecuta: playwright install"
+            ) from exc
+        raise
+
+
 
 
 def scrape_eps_sync(df: pd.DataFrame, doc_col: str, headless: bool, job_id: str):
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        browser = launch_browser(p, headless=headless)
         page = browser.new_page()
         
         total = len(df)
