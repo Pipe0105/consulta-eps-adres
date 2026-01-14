@@ -21,7 +21,7 @@ from starlette.requests import Request
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-import adres_lookup
+from . import adres_lookup
 
 START_URL = "https://www.adres.gov.co/consulte-su-eps"
 RESULT_URL_PART = "BDUA_Internet/Pages/RespuestaConsulta.aspx"
