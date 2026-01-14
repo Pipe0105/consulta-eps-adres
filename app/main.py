@@ -21,7 +21,7 @@ from starlette.requests import Request
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-
+import adres_lookup
 
 START_URL = "https://www.adres.gov.co/consulte-su-eps"
 RESULT_URL_PART = "BDUA_Internet/Pages/RespuestaConsulta.aspx"
@@ -40,6 +40,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 app = FastAPI(title="Consulta masiva EPS (ADRES) - Sin API")
+app.include_router(adres_lookup.router)
 PROGRESS_LOCK = Lock()
 PROGRESS_STATE = {}
 PLAYWRIGHT_INSTALL_LOCK = Lock()
